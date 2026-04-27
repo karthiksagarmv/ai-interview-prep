@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Interview Assistant</title>
+  <style>
+    :root {
+      --bg: #0d0f12;
+      --surface: #161a1f;
+      --surface2: #1e2329;
+      --border: rgba(255,255,255,0.08);
+      --border2: rgba(255,255,255,0.14);
+      --text: #eef0f3;
+      --muted: #7a8494;
+      --accent: #22c58b;
+      --accent-dim: rgba(34,197,139,0.12);
+      --accent-border: rgba(34,197,139,0.35);
+      --warn: #f0a500;
+      --radius: 14px;
+      --radius-sm: 8px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      min-height: 100vh;
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    }
+
+    /* ── SCREENS ── */
+    .screen { display: none; flex-direction: column; min-height: 100vh; }
+    .screen.active { display: flex; }
+
+    /* ── SETUP SCREEN ── */
+    .setup-wrap {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 28px 20px;
+      gap: 28px;
+    }
+
+    .logo-block { text-align: center; }
+    .logo-icon {
+      width: 56px; height: 56px; border-radius: 16px;
+      background: var(--accent-dim); border: 1px solid var(--accent-border);
+      display: inline-flex; align-items: center; justify-content: center;
+      margin-bottom: 14px;
+    }
+    .logo-icon svg { width: 26px; height: 26px; color: var(--accent); }
+    .logo-title { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
+    .logo-sub { font-size: 14px; color: var(--muted); margin-top: 5px; line-height: 1.5; }
+
+    .form-group { display: flex; flex-direction: column; gap: 7px; }
+    .form-label { font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+    .form-input {
+      background: var(--surface);
+      border: 1px solid var(--border2);
+      color: var(--text);
+      border-radius: var(--radius-sm);
+      padding: 14px 16px;
+      font-size: 15px;
+      width: 100%;
+      outline: none;
+      -webkit-appearance: none;
+      transition: border-color 0.15s;
+    }
+    .form-input:focus { border-color: var(--accent); }
+    .form-input::placeholder { color: var(--muted); }
+
+    .api-row { display: flex; gap: 8px; }
+    .api-row .form-input { flex: 1; font-family: 'Courier New', monospace; font-size: 13px; letter-spacing: 0.5px; }
+    .eye-btn {
+      background: var(--surface); border: 1px solid var(--border2);
+      color: var(--muted); border-radius: var(--radius-sm);
+      padding: 0 14px; cursor: pointer; font-size: 16px;
+      flex-shrink: 0; display: flex; align-items: center;
+    }
+
+    .api-note {
+      font-size: 12px; color: var(--muted); line-height: 1.55;
+      background: var(--surface); border-radius: var(--radius-sm);
+      padding: 10px 12px; border-left: 2px solid var(--warn);
+    }
+    .api-note a { color: var(--warn); }
+
+    .start-btn {
+      background: var(--accent);
+      color: #0a1a13;
+      border: none;
+      border-radius: var(--radius);
+      padding: 17px;
+      font-size: 16px;
+      font-weight: 700;
+      width: 100%;
+      cursor: pointer;
+      letter-spacing: 0.01em;
+      transition: opacity 0.15s, transform 0.1s;
+      -webkit-appearance: none;
+    }
+    .start-btn:active { opacity: 0.85; transform: scale(0.98); }
+    .start-btn:disabled { opacity: 0.4; }
+
+    /* ── MAIN SCREEN ── */
+    .top-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 16px 10px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+      position: sticky; top: 0; z-index: 10;
+    }
+    .top-bar-title { font-size: 15px; font-weight: 600; }
+    .settings-btn {
+      background: var(--surface); border: 1px solid var(--border);
+      color: var(--muted); border-radius: 8px;
+      width: 36px; height: 36px;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; font-size: 16px;
+    }
+
+    .role-badge {
+      margin: 10px 16px 0;
+      background: var(--surface2);
+      border-radius: var(--radius-sm);
+      padding: 8px 12px;
+      font-size: 12px; color: var(--muted);
+      display: flex; align-items: center; gap: 6px;
+    }
+    .role-badge strong { color: var(--text); font-weight: 500; }
+
+    .main-content { flex: 1; overflow-y: auto; padding: 12px 16px 100px; display: flex; flex-direction: column; gap: 12px; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+    }
+    .card-label {
+      font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--muted); margin-bottom: 10px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .dot-live {
+      width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+      animation: pulse 1.2s ease-in-out infinite; flex-shrink: 0;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.2} }
+
+    .transcript-text {
+      font-size: 15px; line-height: 1.65; color: var(--text);
+      min-height: 60px;
+    }
+    .transcript-text.empty { color: var(--muted); font-style: italic; font-size: 14px; }
+
+    .answer-list { display: flex; flex-direction: column; gap: 8px; min-height: 60px; }
+    .answer-bullet {
+      background: var(--surface2);
+      border-left: 2px solid var(--accent);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      padding: 10px 12px;
+      font-size: 14px; line-height: 1.6; color: var(--text);
+    }
+    .answer-empty { color: var(--muted); font-style: italic; font-size: 14px; }
+    .thinking-text { color: var(--muted); font-size: 14px; }
+    .thinking-dots { display: inline-block; }
+    .thinking-dots::after { content: ''; animation: dots 1.2s steps(4,end) infinite; }
+    @keyframes dots { 0%{content:''} 25%{content:'.'} 50%{content:'..'} 75%{content:'...'} 100%{content:''} }
+
+    /* ── BOTTOM CONTROLS ── */
+    .bottom-bar {
+      position: fixed; bottom: 0; left: 0; right: 0;
+      background: var(--bg);
+      border-top: 1px solid var(--border);
+      padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+      display: flex; gap: 10px; align-items: center; z-index: 10;
+    }
+
+    .mic-btn {
+      flex: 1;
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      padding: 16px;
+      border-radius: var(--radius);
+      border: 1.5px solid var(--border2);
+      background: var(--surface);
+      color: var(--text);
+      font-size: 15px; font-weight: 600;
+      cursor: pointer; transition: all 0.15s;
+      -webkit-appearance: none;
+    }
+    .mic-btn.listening {
+      background: var(--accent-dim);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .mic-btn:active { transform: scale(0.97); }
+    .mic-btn svg { width: 20px; height: 20px; flex-shrink: 0; }
+
+    .clear-btn {
+      background: var(--surface); border: 1px solid var(--border);
+      color: var(--muted); border-radius: var(--radius);
+      padding: 16px 18px; cursor: pointer; font-size: 14px;
+      -webkit-appearance: none; flex-shrink: 0;
+    }
+    .clear-btn:active { opacity: 0.7; }
+
+    /* ── HISTORY ── */
+    .history-section { margin-top: 4px; }
+    .history-label { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+    .history-item {
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      padding: 10px 12px; margin-bottom: 8px; background: var(--surface2);
+    }
+    .history-q { font-size: 11px; color: var(--muted); margin-bottom: 4px; line-height: 1.4; }
+    .history-a { font-size: 12px; color: var(--text); line-height: 1.55; }
+
+    /* ── TOAST ── */
+    .toast {
+      position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+      background: var(--surface); border: 1px solid var(--border2);
+      color: var(--text); border-radius: var(--radius-sm);
+      padding: 10px 20px; font-size: 13px; z-index: 100;
+      opacity: 0; transition: opacity 0.2s; pointer-events: none;
+      white-space: nowrap; max-width: 90vw; text-align: center;
+    }
+    .toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+
+<!-- SETUP SCREEN -->
+<div class="screen active" id="setupScreen">
+  <div class="setup-wrap">
+    <div class="logo-block">
+      <div class="logo-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+          <line x1="12" y1="19" x2="12" y2="23"/>
+          <line x1="8" y1="23" x2="16" y2="23"/>
+        </svg>
+      </div>
+      <div class="logo-title">Interview Assistant</div>
+      <div class="logo-sub">Real-time answer suggestions<br>powered by Claude AI</div>
+    </div>
+
+    <div class="form-group">
+      <div class="form-label">Anthropic API Key</div>
+      <div class="api-row">
+        <input class="form-input" id="apiKeyInput" type="password" placeholder="sk-ant-api03-..." autocomplete="off" spellcheck="false" />
+        <button class="eye-btn" onclick="toggleKey()" id="eyeBtn">👁</button>
+      </div>
+      <div class="api-note">
+        Your key stays on this device only. Get one at
+        <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <div class="form-label">Your Role</div>
+      <input class="form-input" id="roleInput" type="text" placeholder="e.g. Senior Software Engineer" />
+    </div>
+
+    <div class="form-group">
+      <div class="form-label">Company / Context <span style="color:var(--muted);font-style:italic;text-transform:none;font-size:11px">(optional)</span></div>
+      <input class="form-input" id="companyInput" type="text" placeholder="e.g. Google, early-stage startup…" />
+    </div>
+
+    <button class="start-btn" id="goBtn" onclick="goToMain()">Get Started →</button>
+  </div>
+</div>
+
+<!-- MAIN SCREEN -->
+<div class="screen" id="mainScreen">
+  <div class="top-bar">
+    <div class="top-bar-title">Interview Assistant</div>
+    <button class="settings-btn" onclick="goToSetup()">⚙︎</button>
+  </div>
+
+  <div class="role-badge">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+    <span id="roleBadge">Role</span>
+  </div>
+
+  <div class="main-content" id="mainContent">
+    <div class="card" id="transcriptCard">
+      <div class="card-label" id="transcriptLabel">Question heard</div>
+      <div class="transcript-text empty" id="transcriptArea">Tap "Start listening" and hold your phone near the interviewer...</div>
+    </div>
+
+    <div class="card">
+      <div class="card-label">Suggested answer</div>
+      <div class="answer-list" id="answerArea">
+        <div class="answer-empty">Your talking points will appear here once a question is detected.</div>
+      </div>
+    </div>
+
+    <div class="history-section" id="historySection" style="display:none;">
+      <div class="history-label">Previous questions</div>
+      <div id="historyList"></div>
+    </div>
+  </div>
+
+  <div class="bottom-bar">
+    <button class="mic-btn" id="micBtn" onclick="toggleListening()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+        <line x1="12" y1="19" x2="12" y2="23"/>
+        <line x1="8" y1="23" x2="16" y2="23"/>
+      </svg>
+      <span id="micBtnLabel">Start listening</span>
+    </button>
+    <button class="clear-btn" onclick="clearAll()">Clear</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  let apiKey = '';
+  let role = '';
+  let company = '';
+  let recognition = null;
+  let isListening = false;
+  let currentTranscript = '';
+  let debounceTimer = null;
+  let qaHistory = [];           // Bug 1 fix: renamed from 'history' (shadowed window.history)
+  let activeRequestId = 0;      // Bug 5 fix: request counter to cancel stale API responses
+
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+  // ── Persist key ──
+  window.addEventListener('load', () => {
+    const saved = localStorage.getItem('ia_key');
+    const savedRole = localStorage.getItem('ia_role');
+    const savedCompany = localStorage.getItem('ia_company');
+    if (saved) document.getElementById('apiKeyInput').value = saved;
+    if (savedRole) document.getElementById('roleInput').value = savedRole;
+    if (savedCompany) document.getElementById('companyInput').value = savedCompany;
+  });
+
+  function toggleKey() {
+    const inp = document.getElementById('apiKeyInput');
+    inp.type = inp.type === 'password' ? 'text' : 'password';
+  }
+
+  function showToast(msg, duration = 2500) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), duration);
+  }
+
+  function goToMain() {
+    apiKey = document.getElementById('apiKeyInput').value.trim();
+    role = document.getElementById('roleInput').value.trim();
+    company = document.getElementById('companyInput').value.trim();
+
+    if (!apiKey) { showToast('Please enter your Anthropic API key'); return; }
+    if (!apiKey.startsWith('sk-ant')) { showToast('Key should start with sk-ant…'); return; }
+    if (!role) { showToast('Please enter your role'); return; }
+
+    if (!SpeechRecognition) {
+      showToast('Speech recognition not supported on this browser. Use Chrome.', 4000);
+    }
+
+    localStorage.setItem('ia_key', apiKey);
+    localStorage.setItem('ia_role', role);
+    localStorage.setItem('ia_company', company);
+
+    const badge = company ? `${role} @ ${company}` : role;
+    document.getElementById('roleBadge').textContent = badge;
+
+    document.getElementById('setupScreen').classList.remove('active');
+    document.getElementById('mainScreen').classList.add('active');
+
+    // Bug 2 fix: only create recognition once; tear down old instance if settings changed
+    if (recognition) {
+      try { recognition.abort(); } catch(e) {}
+      recognition = null;
+    }
+    setupRecognition();
+  }
+
+  function goToSetup() {
+    stopListening();
+    clearTimeout(debounceTimer);   // cancel any pending getSuggestion call
+    activeRequestId++;             // invalidate any in-flight API request
+    currentTranscript = '';       // Bug fix: prevent stale transcript bleeding into next session
+    document.getElementById('mainScreen').classList.remove('active');
+    document.getElementById('setupScreen').classList.add('active');
+  }
+
+  function setupRecognition() {
+    if (!SpeechRecognition) return;
+    recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+
+    recognition.onresult = (event) => {
+      let interim = '', final = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const t = event.results[i][0].transcript;
+        if (event.results[i].isFinal) final += t;
+        else interim += t;
+      }
+      if (final) currentTranscript += final + ' ';
+
+      const display = currentTranscript + interim;
+      updateTranscript(display);
+
+      clearTimeout(debounceTimer);
+      if (currentTranscript.trim().length > 8) {
+        debounceTimer = setTimeout(() => {
+          const question = currentTranscript.trim();
+          currentTranscript = '';          // Bug 4 fix: reset after each question is sent
+          updateTranscript('');
+          getSuggestion(question);
+        }, 2000);
+      }
+    };
+
+    recognition.onerror = (e) => {
+      if (e.error === 'not-allowed') { showToast('Microphone access denied'); stopListening(); }
+      if (e.error === 'no-speech') return;
+    };
+
+    recognition.onend = () => {
+      if (isListening) {
+        try { recognition.start(); } catch(e) {
+          // Mic died mid-session (e.g. permission revoked) — reset UI
+          isListening = false;
+          document.getElementById('micBtn').classList.remove('listening');
+          document.getElementById('micBtnLabel').textContent = 'Start listening';
+          document.getElementById('transcriptLabel').innerHTML = 'Question heard';
+          showToast('Microphone stopped. Tap to restart.');
+        }
+      }
+    };
+  }
+
+  function updateTranscript(text) {
+    const area = document.getElementById('transcriptArea');
+    const label = document.getElementById('transcriptLabel');
+    if (!text.trim()) {
+      area.className = 'transcript-text empty';
+      area.textContent = 'Tap "Start listening" and hold your phone near the interviewer...';
+      label.innerHTML = 'Question heard';
+      return;
+    }
+    area.className = 'transcript-text';
+    area.textContent = text;
+    label.innerHTML = isListening ? '<span class="dot-live"></span> Listening...' : 'Question heard';
+  }
+
+  function toggleListening() {
+    if (isListening) stopListening();
+    else startListening();
+  }
+
+  function startListening() {
+    if (!SpeechRecognition) { showToast('Use Chrome for microphone support'); return; }
+    try {
+      recognition.start();
+      isListening = true;                  // Bug 6 fix: only set true if start() succeeds
+      const btn = document.getElementById('micBtn');
+      btn.classList.add('listening');
+      document.getElementById('micBtnLabel').textContent = 'Stop listening';
+    } catch(e) {
+      showToast('Could not start microphone: ' + (e.message || e.name));
+    }
+  }
+
+  function stopListening() {
+    isListening = false;
+    if (recognition) try { recognition.stop(); } catch(e) {}
+    const btn = document.getElementById('micBtn');
+    btn.classList.remove('listening');
+    document.getElementById('micBtnLabel').textContent = 'Start listening';
+    document.getElementById('transcriptLabel').innerHTML = 'Question heard';
+  }
+
+  function clearAll() {
+    currentTranscript = '';
+    clearTimeout(debounceTimer);
+    updateTranscript('');
+    document.getElementById('answerArea').innerHTML = '<div class="answer-empty">Your talking points will appear here once a question is detected.</div>';
+  }
+
+  async function getSuggestion(question) {
+    const contextNote = company ? ` interviewing at ${company}` : '';
+    const systemPrompt = `You are an expert interview coach helping a ${role}${contextNote}.
+Given an interview question, provide 3-4 concise bullet points the candidate can use to answer confidently.
+Keep each bullet to 1-2 sentences. Give actual content to say, not meta-advice.
+Format: start each bullet with "– " on a new line. No preamble or conclusion.`;
+
+    const answerArea = document.getElementById('answerArea');
+    answerArea.innerHTML = '<div class="thinking-text">Thinking<span class="thinking-dots"></span></div>';
+
+    // Bug 5 fix: capture request ID; abandon response if a newer request started
+    const thisRequestId = ++activeRequestId;
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true'
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 600,
+          stream: true,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: `Interview question: "${question}"` }]
+        })
+      });
+
+      if (thisRequestId !== activeRequestId) return;   // stale, newer request took over
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        const msg = err?.error?.message || `API error ${response.status}`;
+        answerArea.innerHTML = `<div class="answer-empty" style="color:#f07070">${msg}</div>`;
+        return;
+      }
+
+      answerArea.innerHTML = '';
+      let fullText = '';
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (thisRequestId !== activeRequestId) { reader.cancel(); return; }  // stale
+        const chunk = decoder.decode(value, { stream: true });
+        for (const line of chunk.split('\n')) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data: ')) continue;
+          const data = trimmed.slice(6).trim();   // trim handles \r from CRLF endings
+          if (data === '[DONE]') continue;
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.type === 'content_block_delta' && parsed.delta?.type === 'text_delta') {
+              fullText += parsed.delta.text;
+              renderBullets(answerArea, fullText);
+            }
+          } catch(e) {}
+        }
+      }
+
+      if (fullText.trim()) {
+        qaHistory.unshift({ q: question, a: fullText.trim() });   // Bug 1 fix: qaHistory
+        if (qaHistory.length > 5) qaHistory.pop();
+        renderHistory();
+      }
+
+    } catch(err) {
+      if (thisRequestId !== activeRequestId) return;
+      answerArea.innerHTML = `<div class="answer-empty" style="color:#f07070">Network error. Check your connection.</div>`;
+    }
+  }
+
+  function escapeHtml(str) {
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function renderBullets(area, text) {
+    const lines = text.split('\n').filter(l => l.trim());
+    if (!lines.length) return;
+    area.innerHTML = lines.map(line => {
+      const clean = escapeHtml(line.replace(/^–\s*|^-\s*|\*\*/g, '').trim());
+      return clean ? `<div class="answer-bullet">${clean}</div>` : '';
+    }).join('');
+  }
+
+  function renderHistory() {
+    const section = document.getElementById('historySection');
+    const list = document.getElementById('historyList');
+    if (!qaHistory.length) { section.style.display = 'none'; return; }
+    section.style.display = 'block';
+    list.innerHTML = qaHistory.map(item => {
+      const shortA = item.a.replace(/^–\s*/gm, '').split('\n')[0] || '';
+      return `<div class="history-item">
+        <div class="history-q">${escapeHtml(item.q.slice(0, 110))}${item.q.length > 110 ? '…' : ''}</div>
+        <div class="history-a">${escapeHtml(shortA.slice(0, 160))}…</div>
+      </div>`;
+    }).join('');
+    document.getElementById('mainContent').scrollTop = document.getElementById('mainContent').scrollHeight;
+  }
+</script>
+</body>
+</html>
