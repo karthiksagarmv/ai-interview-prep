@@ -285,6 +285,7 @@
   <div class="role-badge">
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
     <span id="roleBadge">Role</span>
+    <span id="contextBadge" style="display:none; margin-left:auto; background:rgba(34,197,139,0.15); color:#22c58b; border:1px solid rgba(34,197,139,0.3); border-radius:20px; padding:2px 8px; font-size:10px; font-weight:600; letter-spacing:0.04em;"></span>
   </div>
 
   <div class="main-content" id="mainContent">
@@ -330,8 +331,10 @@
   let isListening = false;
   let currentTranscript = '';
   let debounceTimer = null;
-  let qaHistory = [];           // Bug 1 fix: renamed from 'history' (shadowed window.history)
-  let activeRequestId = 0;      // Bug 5 fix: request counter to cancel stale API responses
+  let qaHistory = [];
+  let activeRequestId = 0;
+  let conversationContext = [];   // full multi-turn history sent to API each call
+  let toastTimer = null;          // fix: prevents rapid toasts cancelling each other
 
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
@@ -351,24 +354,35 @@
   }
 
   function showToast(msg, duration = 2500) {
+    clearTimeout(toastTimer);
     const t = document.getElementById('toast');
     t.textContent = msg;
     t.classList.add('show');
-    setTimeout(() => t.classList.remove('show'), duration);
+    toastTimer = setTimeout(() => t.classList.remove('show'), duration);
   }
 
   function goToMain() {
-    apiKey = document.getElementById('apiKeyInput').value.trim();
-    role = document.getElementById('roleInput').value.trim();
-    company = document.getElementById('companyInput').value.trim();
+    const newApiKey = document.getElementById('apiKeyInput').value.trim();
+    const newRole = document.getElementById('roleInput').value.trim();
+    const newCompany = document.getElementById('companyInput').value.trim();
 
-    if (!apiKey) { showToast('Please enter your Anthropic API key'); return; }
-    if (!apiKey.startsWith('sk-ant')) { showToast('Key should start with sk-ant…'); return; }
-    if (!role) { showToast('Please enter your role'); return; }
+    if (!newApiKey) { showToast('Please enter your Anthropic API key'); return; }
+    if (!newApiKey.startsWith('sk-ant')) { showToast('Key should start with sk-ant…'); return; }
+    if (!newRole) { showToast('Please enter your role'); return; }
 
     if (!SpeechRecognition) {
       showToast('Speech recognition not supported on this browser. Use Chrome.', 4000);
     }
+
+    // Fix bug 2: only wipe conversation context if role/company actually changed
+    // An accidental settings tap and return preserves full interview context
+    if (newRole !== role || newCompany !== company || newApiKey !== apiKey) {
+      conversationContext = [];
+    }
+
+    apiKey = newApiKey;
+    role = newRole;
+    company = newCompany;
 
     localStorage.setItem('ia_key', apiKey);
     localStorage.setItem('ia_role', role);
@@ -376,11 +390,11 @@
 
     const badge = company ? `${role} @ ${company}` : role;
     document.getElementById('roleBadge').textContent = badge;
+    updateContextBadge();   // Fix bug 1: always sync badge when entering main screen
 
     document.getElementById('setupScreen').classList.remove('active');
     document.getElementById('mainScreen').classList.add('active');
 
-    // Bug 2 fix: only create recognition once; tear down old instance if settings changed
     if (recognition) {
       try { recognition.abort(); } catch(e) {}
       recognition = null;
@@ -390,9 +404,10 @@
 
   function goToSetup() {
     stopListening();
-    clearTimeout(debounceTimer);   // cancel any pending getSuggestion call
-    activeRequestId++;             // invalidate any in-flight API request
-    currentTranscript = '';       // Bug fix: prevent stale transcript bleeding into next session
+    clearTimeout(debounceTimer);
+    activeRequestId++;
+    currentTranscript = '';
+    // Fix bug 2: do NOT wipe conversationContext here — only wipe in goToMain if settings changed
     document.getElementById('mainScreen').classList.remove('active');
     document.getElementById('setupScreen').classList.add('active');
   }
@@ -428,8 +443,15 @@
     };
 
     recognition.onerror = (e) => {
-      if (e.error === 'not-allowed') { showToast('Microphone access denied'); stopListening(); }
-      if (e.error === 'no-speech') return;
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        showToast('Microphone access denied'); stopListening();
+      } else if (e.error === 'audio-capture') {
+        showToast('No microphone detected'); stopListening();
+      } else if (e.error === 'network') {
+        showToast('Speech recognition lost network');
+        // don't stop — it may recover on reconnect
+      }
+      // 'no-speech' and 'aborted' are intentional/transient — stay silent
     };
 
     recognition.onend = () => {
@@ -489,23 +511,62 @@
 
   function clearAll() {
     currentTranscript = '';
+    conversationContext = [];
     clearTimeout(debounceTimer);
     updateTranscript('');
+    updateContextBadge();
     document.getElementById('answerArea').innerHTML = '<div class="answer-empty">Your talking points will appear here once a question is detected.</div>';
   }
 
   async function getSuggestion(question) {
     const contextNote = company ? ` interviewing at ${company}` : '';
-    const systemPrompt = `You are an expert interview coach helping a ${role}${contextNote}.
-Given an interview question, provide 3-4 concise bullet points the candidate can use to answer confidently.
-Keep each bullet to 1-2 sentences. Give actual content to say, not meta-advice.
-Format: start each bullet with "– " on a new line. No preamble or conclusion.`;
+    const isFollowUp = conversationContext.length > 0;
+
+    const systemPrompt = `You are a live interview teleprompter for ${role}${contextNote}. The candidate glances at you for 2 seconds mid-answer. You see the full interview conversation so far.
+
+Your job changes based on the type of input:
+
+IF it is a NEW question:
+- Give 3 bullets, 4–7 words each
+- Keywords and phrases only, no full sentences
+- Cover: core answer, one concrete example hook, one closing angle
+
+IF it is a FOLLOW-UP, clarification, or "tell me more" / "why" / "can you elaborate":
+- Give 2 bullets MAX
+- These must directly continue or deepen the previous answer — no repetition
+- Even shorter: 3–5 words, just the next pivot point
+
+IF the interviewer is pushing back or challenging ("but why", "that doesn't seem right", "how would you handle X differently"):
+- Give 1–2 bullets
+- First bullet: acknowledge briefly (1–3 words max e.g. "Fair point —")
+- Second bullet: reframe or add evidence
+
+RULES that never change:
+- Start every bullet with "– "
+- No preamble. No label. No "Great question". No explanation.
+- Output only the bullets. Nothing else.
+
+GOOD FOLLOW-UP EXAMPLE:
+Previous Q: "Tell me about a challenge you faced"
+Previous answer bullets: – Led migration under tight deadline / – Team resistance, ran workshops / – Shipped on time, 40% faster
+Follow-up: "What would you do differently?"
+Output:
+– Involve team earlier
+– Document tradeoffs upfront
+
+BAD OUTPUT (never do this):
+"Building on what you said earlier, here are some additional points to consider..."`;
 
     const answerArea = document.getElementById('answerArea');
-    answerArea.innerHTML = '<div class="thinking-text">Thinking<span class="thinking-dots"></span></div>';
+    answerArea.innerHTML = `<div class="thinking-text">${isFollowUp ? 'Follow-up' : 'Thinking'}<span class="thinking-dots"></span></div>`;
 
-    // Bug 5 fix: capture request ID; abandon response if a newer request started
     const thisRequestId = ++activeRequestId;
+
+    // Build messages array: full conversation history + new question
+    const messages = [
+      ...conversationContext,
+      { role: 'user', content: question }
+    ];
 
     try {
       const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -518,19 +579,19 @@ Format: start each bullet with "– " on a new line. No preamble or conclusion.`
         },
         body: JSON.stringify({
           model: 'claude-sonnet-4-6',
-          max_tokens: 600,
+          max_tokens: 200,          // tighter cap — answers are short by design
           stream: true,
           system: systemPrompt,
-          messages: [{ role: 'user', content: `Interview question: "${question}"` }]
+          messages
         })
       });
 
-      if (thisRequestId !== activeRequestId) return;   // stale, newer request took over
+      if (thisRequestId !== activeRequestId) return;
 
       if (!response.ok) {
         const err = await response.json().catch(() => ({}));
         const msg = err?.error?.message || `API error ${response.status}`;
-        answerArea.innerHTML = `<div class="answer-empty" style="color:#f07070">${msg}</div>`;
+        answerArea.innerHTML = `<div class="answer-empty" style="color:#f07070">${escapeHtml(msg)}</div>`;
         return;
       }
 
@@ -543,12 +604,12 @@ Format: start each bullet with "– " on a new line. No preamble or conclusion.`
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        if (thisRequestId !== activeRequestId) { reader.cancel(); return; }  // stale
+        if (thisRequestId !== activeRequestId) { reader.cancel(); return; }
         const chunk = decoder.decode(value, { stream: true });
         for (const line of chunk.split('\n')) {
           const trimmed = line.trim();
           if (!trimmed.startsWith('data: ')) continue;
-          const data = trimmed.slice(6).trim();   // trim handles \r from CRLF endings
+          const data = trimmed.slice(6).trim();
           if (data === '[DONE]') continue;
           try {
             const parsed = JSON.parse(data);
@@ -561,14 +622,40 @@ Format: start each bullet with "– " on a new line. No preamble or conclusion.`
       }
 
       if (fullText.trim()) {
-        qaHistory.unshift({ q: question, a: fullText.trim() });   // Bug 1 fix: qaHistory
+        // Append this turn to conversation context
+        conversationContext.push({ role: 'user', content: question });
+        conversationContext.push({ role: 'assistant', content: fullText.trim() });
+
+        // Cap at 12 messages (6 turns) to stay within token limits
+        if (conversationContext.length > 12) {
+          conversationContext = conversationContext.slice(conversationContext.length - 12);
+        }
+
+        updateContextBadge();
+
+        qaHistory.unshift({ q: question, a: fullText.trim(), followUp: isFollowUp });
         if (qaHistory.length > 5) qaHistory.pop();
         renderHistory();
+      } else {
+        // Fix bug 4: stream completed but returned no usable content — show fallback
+        answerArea.innerHTML = '<div class="answer-empty">No suggestion returned — tap Clear and try again.</div>';
       }
 
     } catch(err) {
       if (thisRequestId !== activeRequestId) return;
       answerArea.innerHTML = `<div class="answer-empty" style="color:#f07070">Network error. Check your connection.</div>`;
+    }
+  }
+
+  function updateContextBadge() {
+    const turns = conversationContext.length / 2;
+    const badge = document.getElementById('contextBadge');
+    if (!badge) return;
+    if (turns === 0) {
+      badge.style.display = 'none';
+    } else {
+      badge.style.display = 'inline-flex';
+      badge.textContent = `${turns} turn${turns > 1 ? 's' : ''} in context`;
     }
   }
 
@@ -592,8 +679,11 @@ Format: start each bullet with "– " on a new line. No preamble or conclusion.`
     section.style.display = 'block';
     list.innerHTML = qaHistory.map(item => {
       const shortA = item.a.replace(/^–\s*/gm, '').split('\n')[0] || '';
+      const tag = item.followUp
+        ? `<span style="background:rgba(34,197,139,0.15);color:#22c58b;border-radius:4px;padding:1px 5px;font-size:10px;font-weight:600;margin-left:4px;">follow-up</span>`
+        : '';
       return `<div class="history-item">
-        <div class="history-q">${escapeHtml(item.q.slice(0, 110))}${item.q.length > 110 ? '…' : ''}</div>
+        <div class="history-q">${escapeHtml(item.q.slice(0, 110))}${item.q.length > 110 ? '…' : ''}${tag}</div>
         <div class="history-a">${escapeHtml(shortA.slice(0, 160))}…</div>
       </div>`;
     }).join('');
