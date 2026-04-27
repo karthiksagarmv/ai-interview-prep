@@ -163,9 +163,26 @@
       background: var(--surface2);
       border-left: 2px solid var(--accent);
       border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-      padding: 10px 12px;
+      padding: 10px 32px 10px 12px;
       font-size: 14px; line-height: 1.6; color: var(--text);
+      cursor: pointer; user-select: none; position: relative;
+      transition: background 0.12s;
     }
+    .answer-bullet:active { background: var(--bg); }
+    .answer-bullet.expanded { border-left-color: var(--accent); background: var(--bg); }
+    .answer-bullet::after {
+      content: '›'; position: absolute; right: 11px; top: 12px;
+      color: var(--muted);
+      font-size: 18px; transition: transform 0.15s, color 0.15s;
+    }
+    .answer-bullet.expanded::after { transform: rotate(90deg); color: var(--accent); }
+    .bullet-detail {
+      margin-top: 6px; padding: 10px 12px 10px 14px;
+      background: var(--surface); border-radius: var(--radius-sm);
+      border-left: 2px solid rgba(34,197,139,0.35);
+      font-size: 13px; line-height: 1.75; color: var(--text);
+    }
+    .bullet-detail.loading { color: var(--muted); font-style: italic; }
     .answer-empty { color: var(--muted); font-style: italic; font-size: 14px; }
     .thinking-text { color: var(--muted); font-size: 14px; }
     .thinking-dots { display: inline-block; }
@@ -333,8 +350,10 @@
   let debounceTimer = null;
   let qaHistory = [];
   let activeRequestId = 0;
-  let conversationContext = [];   // full multi-turn history sent to API each call
-  let toastTimer = null;          // fix: prevents rapid toasts cancelling each other
+  let conversationContext = [];
+  let toastTimer = null;
+  let currentQuestion = '';       // stores last question for bullet expand calls
+  let expandRequestId = 0;        // separate counter for expand API calls
 
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
@@ -406,8 +425,8 @@
     stopListening();
     clearTimeout(debounceTimer);
     activeRequestId++;
+    expandRequestId++;          // cancel any in-flight expand request
     currentTranscript = '';
-    // Fix bug 2: do NOT wipe conversationContext here — only wipe in goToMain if settings changed
     document.getElementById('mainScreen').classList.remove('active');
     document.getElementById('setupScreen').classList.add('active');
   }
@@ -427,19 +446,8 @@
         else interim += t;
       }
       if (final) currentTranscript += final + ' ';
-
-      const display = currentTranscript + interim;
-      updateTranscript(display);
-
-      clearTimeout(debounceTimer);
-      if (currentTranscript.trim().length > 8) {
-        debounceTimer = setTimeout(() => {
-          const question = currentTranscript.trim();
-          currentTranscript = '';          // Bug 4 fix: reset after each question is sent
-          updateTranscript('');
-          getSuggestion(question);
-        }, 2000);
-      }
+      updateTranscript(currentTranscript + interim);
+      // No auto-fire — getSuggestion is triggered only when user taps Stop
     };
 
     recognition.onerror = (e) => {
@@ -507,6 +515,14 @@
     btn.classList.remove('listening');
     document.getElementById('micBtnLabel').textContent = 'Start listening';
     document.getElementById('transcriptLabel').innerHTML = 'Question heard';
+
+    // Fire suggestion on whatever was heard — this is the only trigger now
+    const question = currentTranscript.trim();
+    if (question.length > 4) {
+      currentTranscript = '';
+      updateTranscript('');
+      getSuggestion(question);
+    }
   }
 
   function clearAll() {
@@ -527,17 +543,17 @@
 Your job changes based on the type of input:
 
 IF it is a NEW question:
-- Give 3 bullets, 4–7 words each
+- Give exactly 5 bullets, 4–7 words each
 - Keywords and phrases only, no full sentences
-- Cover: core answer, one concrete example hook, one closing angle
+- Cover: core answer, 2 concrete example hooks, one metric/outcome, one closing angle
 
 IF it is a FOLLOW-UP, clarification, or "tell me more" / "why" / "can you elaborate":
-- Give 2 bullets MAX
+- Give 3 bullets MAX
 - These must directly continue or deepen the previous answer — no repetition
 - Even shorter: 3–5 words, just the next pivot point
 
 IF the interviewer is pushing back or challenging ("but why", "that doesn't seem right", "how would you handle X differently"):
-- Give 1–2 bullets
+- Give 2 bullets
 - First bullet: acknowledge briefly (1–3 words max e.g. "Fair point —")
 - Second bullet: reframe or add evidence
 
@@ -553,9 +569,12 @@ Follow-up: "What would you do differently?"
 Output:
 – Involve team earlier
 – Document tradeoffs upfront
+– Clearer success metrics day one
 
 BAD OUTPUT (never do this):
 "Building on what you said earlier, here are some additional points to consider..."`;
+
+    currentQuestion = question;   // store for bullet expand calls
 
     const answerArea = document.getElementById('answerArea');
     answerArea.innerHTML = `<div class="thinking-text">${isFollowUp ? 'Follow-up' : 'Thinking'}<span class="thinking-dots"></span></div>`;
@@ -579,7 +598,7 @@ BAD OUTPUT (never do this):
         },
         body: JSON.stringify({
           model: 'claude-sonnet-4-6',
-          max_tokens: 200,          // tighter cap — answers are short by design
+          max_tokens: 500,
           stream: true,
           system: systemPrompt,
           messages
@@ -666,10 +685,132 @@ BAD OUTPUT (never do this):
   function renderBullets(area, text) {
     const lines = text.split('\n').filter(l => l.trim());
     if (!lines.length) return;
-    area.innerHTML = lines.map(line => {
+
+    // Before replacing DOM, snapshot content of any open detail panels
+    const openState = {};
+    area.querySelectorAll('.answer-bullet.expanded').forEach(el => {
+      const detail = el.querySelector('.bullet-detail');
+      openState[el.dataset.idx] = detail ? detail.innerHTML : '';
+    });
+
+    area.innerHTML = lines.map((line, i) => {
       const clean = escapeHtml(line.replace(/^–\s*|^-\s*|\*\*/g, '').trim());
-      return clean ? `<div class="answer-bullet">${clean}</div>` : '';
+      if (!clean) return '';
+      const savedContent = openState[String(i)];
+      const wasOpen = savedContent !== undefined;
+      return `<div class="answer-bullet${wasOpen ? ' expanded' : ''}" data-idx="${i}" data-text="${clean}">
+        ${clean}
+        ${wasOpen ? `<div class="bullet-detail" id="detail-${i}">${savedContent}</div>` : ''}
+      </div>`;
     }).join('');
+  }
+
+  // Event delegation — one listener on answerArea handles all bullet taps
+  document.getElementById('answerArea').addEventListener('click', (e) => {
+    const bullet = e.target.closest('.answer-bullet');
+    if (!bullet) return;
+    expandBullet(bullet);
+  });
+
+  async function expandBullet(bulletEl) {
+    const idx = bulletEl.dataset.idx;
+    const bulletText = bulletEl.dataset.text;
+    const isExpanded = bulletEl.classList.contains('expanded');
+
+    if (isExpanded) {
+      bulletEl.classList.remove('expanded');
+      const detail = bulletEl.querySelector('.bullet-detail');
+      if (detail) detail.remove();
+      return;
+    }
+
+    // Bug 5 fix: scope to answerArea, not whole document
+    const answerArea = document.getElementById('answerArea');
+    answerArea.querySelectorAll('.answer-bullet.expanded').forEach(el => {
+      el.classList.remove('expanded');
+      const d = el.querySelector('.bullet-detail');
+      if (d) d.remove();
+    });
+
+    bulletEl.classList.add('expanded');
+    const detail = document.createElement('div');
+    detail.className = 'bullet-detail loading';
+    detail.id = `detail-${idx}`;
+    detail.textContent = 'Expanding…';
+    bulletEl.appendChild(detail);
+
+    const thisExpandId = ++expandRequestId;
+    const contextNote = company ? ` interviewing at ${company}` : '';
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true'
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 500,
+          stream: true,
+          system: `You are an interview coach for ${role}${contextNote}. Expand a single hint bullet into 3 spoken sub-bullets the candidate can say out loud. Each sub-bullet: 1 sentence, concrete, natural speech. Start every sub-bullet with "• ". No preamble. No summary. Output only the 3 sub-bullets.`,
+          messages: [{ role: 'user', content: `Interview question: "${currentQuestion}"\nHint bullet to expand: "${bulletText}"` }]
+        })
+      });
+
+      if (thisExpandId !== expandRequestId) return;
+      if (!response.ok) {
+        // Bug 3 fix: re-query by ID — element may have been replaced by renderBullets
+        const d = document.getElementById(`detail-${idx}`);
+        if (d) { d.textContent = 'Could not expand — try again.'; d.classList.remove('loading'); }
+        return;
+      }
+
+      const liveDetail = document.getElementById(`detail-${idx}`);
+      if (liveDetail) { liveDetail.classList.remove('loading'); liveDetail.textContent = ''; }
+
+      let fullText = '';
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (thisExpandId !== expandRequestId) { reader.cancel(); return; }
+
+        // Bug 3 fix: re-query every render cycle — renderBullets may have replaced the element
+        const currentDetail = document.getElementById(`detail-${idx}`);
+        if (!currentDetail) { reader.cancel(); return; }  // bullet was collapsed or cleared
+
+        const chunk = decoder.decode(value, { stream: true });
+        for (const line of chunk.split('\n')) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data: ')) continue;
+          const data = trimmed.slice(6).trim();
+          if (data === '[DONE]') continue;
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.type === 'content_block_delta' && parsed.delta?.type === 'text_delta') {
+              fullText += parsed.delta.text;
+              currentDetail.innerHTML = fullText.split('\n').filter(l => l.trim()).map(l => {
+                const clean = escapeHtml(l.replace(/^•\s*/, '').trim());
+                return clean ? `<div style="margin-bottom:6px;padding-left:12px;position:relative;"><span style="position:absolute;left:0;color:var(--accent)">•</span>${clean}</div>` : '';
+              }).join('');
+            }
+          } catch(e) {}
+        }
+      }
+
+      const finalDetail = document.getElementById(`detail-${idx}`);
+      if (finalDetail && !fullText.trim()) { finalDetail.textContent = 'No expansion returned.'; }
+
+    } catch(err) {
+      if (thisExpandId !== expandRequestId) return;
+      const d = document.getElementById(`detail-${idx}`);
+      if (d) d.textContent = 'Network error.';
+    }
   }
 
   function renderHistory() {
