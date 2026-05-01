@@ -559,7 +559,7 @@
         </svg>
         <span id="micLabel">Start listening</span>
       </button>
-      <button class="type-btn" id="typeBtn" onclick="toggleTextInput()" title="Type instead of speak">⌨</button>
+      <button class="type-btn" id="typeBtn" onclick="toggleTextInput()" title="Type instead of speak">Text</button>
       <button class="clear-btn" onclick="clearAll()">Clear</button>
     </div>
   </div>
@@ -1347,16 +1347,22 @@ function doCopy(codeId, btnId) {
 }
 
 function clearAll() {
-  if (isListening) {
-    isListening = false;
-    if (recognition) try { recognition.abort(); } catch(e) {}
-  }
+  // Cancel any in-flight API requests first
+  mainReqId++; tabReqId++;
+
+  // Stop mic unconditionally regardless of current mode
+  isListening = false;
+  isRelayMode = false;
+  if (recognition) try { recognition.abort(); } catch(e) {}
+  setupRecognition(); // fresh instance — prevents browser getting stuck after abort
+
+  // Reset state
   currentTranscript = '';
   conversationContext = [];
   cache = { question:'', A:null, B:null, C:null, D:null, E:null, F:null };
   relayCount = 0;
-  isRelayMode = false;
-  mainReqId++; tabReqId++;
+
+  // Reset UI
   setTranscript('');
   setMicUI(false);
   setRelayUI(false);
@@ -1366,11 +1372,13 @@ function clearAll() {
   document.getElementById('relayTextBtn').classList.remove('visible');
   syncCtxBadge();
   syncRelayStrip();
+
   ['A','B','C','D','E','F'].forEach(t => {
     setPanelHtml(t, '<div class="panel-empty">Waiting for a problem…</div>');
     setTabReady(t, false);
   });
   switchTab('A');
+
   document.getElementById('historyWrap').style.display = 'none';
   document.getElementById('historyList').innerHTML = '';
   qaHistory = [];
